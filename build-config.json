@@ -1,0 +1,160 @@
+{
+  "tools": {
+    "git": "C:/Program Files/Git/bin/git.exe",
+    "maven": "D:/tools/apache-maven/bin/mvn.cmd",
+    "npm": "C:/Program Files/nodejs/npm.cmd",
+    "cmake": "C:/Program Files/CMake/bin/cmake.exe",
+    "sevenZip": "C:/Program Files/7-Zip/7z.exe",
+    "innoSetup": "C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
+  },
+  "paths": {
+    "workspace": "./workspace",
+    "output": "./output",
+    "package": "./packages",
+    "dependencies": "D:/offline-deps",
+    "logs": "./logs"
+  },
+  "gitAuth": {
+    "username": "global-git-user",
+    "password": "global-git-password"
+  },
+  "version": "1.2.3",
+  "build": {
+    "parallel": {
+      "enabled": true,
+      "maxWorkers": 3
+    },
+    "enabled": true,
+    "projects": []
+  },
+  "release": {
+    "bump": "patch",
+    "volumeSize": "500m",
+    "productName": "dasim",
+    "exclude": [
+      "*.tmp",
+      "*.bak"
+    ],
+    "inno": {
+      "enabled": true,
+      "appName": "Dasim",
+      "publisher": "Dasim Team",
+      "dataMode": "external",
+      "maxDataPackageSize": "4096M",
+      "scriptTemplatePath": "./inno/setup-template.iss"
+    },
+    "enabled": true
+  },
+  "upload": {
+    "uploadSha256": true,
+    "ftp": {
+      "url": "ftp://ftp.example.com/release/output",
+      "username": "ftp-user",
+      "password": "ftp-password"
+    },
+    "enabled": true
+  },
+  "projects": [
+    {
+      "id": "backend",
+      "source": {
+        "dir": "backend-src",
+        "git": {
+          "url": "https://git.example.com/backend.git",
+          "branch": "main"
+        }
+      },
+      "build": {
+        "tool": "maven",
+        "args": [
+          "-DskipTests"
+        ]
+      },
+      "collect": {
+        "targets": [
+          {
+            "source": "target",
+            "destination": "backend",
+            "exclude": [
+              "*.original",
+              "*.log"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "frontend",
+      "source": {
+        "dir": "frontend-src",
+        "git": {
+          "url": "https://git.example.com/frontend.git",
+          "branch": "main"
+        }
+      },
+      "build": {
+        "tool": "npm",
+        "script": "build",
+        "ciArgs": [
+          "--no-audit",
+          "--prefer-offline"
+        ],
+        "nodeModulesLinks": [
+          {
+            "from": "node_modules/frontend-root",
+            "to": "."
+          },
+          {
+            "from": "node_modules/shared-web",
+            "to": "apps/web"
+          }
+        ]
+      },
+      "collect": {
+        "targets": [
+          {
+            "source": "dist",
+            "destination": "frontend",
+            "exclude": [
+              "*.map"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "cpp",
+      "source": {
+        "dir": "cpp-src",
+        "git": {
+          "url": "https://git.example.com/cpp.git",
+          "branch": "main"
+        }
+      },
+      "build": {
+        "tool": "cmake",
+        "buildDir": "build",
+        "generator": "Ninja",
+        "config": "Release",
+        "configureArgs": [
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DUSE_OFFLINE_DEPS=ON"
+        ],
+        "buildArgs": [
+          "-j8"
+        ]
+      },
+      "collect": {
+        "targets": [
+          {
+            "source": "build/bin",
+            "destination": "cpp",
+            "exclude": [
+              "*.pdb"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
