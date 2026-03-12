@@ -1,11 +1,28 @@
 {
   "tools": {
-    "git": "C:/Program Files/Git/bin/git.exe",
-    "maven": "D:/tools/apache-maven/bin/mvn.cmd",
-    "npm": "C:/Program Files/nodejs/npm.cmd",
-    "cmake": "C:/Program Files/CMake/bin/cmake.exe",
-    "sevenZip": "C:/Program Files/7-Zip/7z.exe",
-    "innoSetup": "C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
+    "git": {
+      "path": "C:/Program Files/Git/bin/git.exe",
+      "username": "global-git-user",
+      "password": "global-git-password"
+    },
+    "maven": {
+      "path": "D:/tools/apache-maven/bin/mvn.cmd",
+      "dependencyDir": "D:/offline-deps/m2-repository",
+      "settingsXml": "./maven/settings.xml"
+    },
+    "npm": {
+      "path": "C:/Program Files/nodejs/npm.cmd",
+      "dependencyDir": "D:/offline-deps/npm-cache"
+    },
+    "cmake": {
+      "path": "C:/Program Files/CMake/bin/cmake.exe"
+    },
+    "sevenZip": {
+      "path": "C:/Program Files/7-Zip/7z.exe"
+    },
+    "innoSetup": {
+      "path": "C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
+    }
   },
   "paths": {
     "workspace": "./workspace",
@@ -13,10 +30,6 @@
     "package": "./packages",
     "dependencies": "D:/offline-deps",
     "logs": "./logs"
-  },
-  "gitAuth": {
-    "username": "global-git-user",
-    "password": "global-git-password"
   },
   "version": "1.2.3",
   "build": {
@@ -95,10 +108,6 @@
       "build": {
         "tool": "npm",
         "script": "build",
-        "ciArgs": [
-          "--no-audit",
-          "--prefer-offline"
-        ],
         "nodeModulesLinks": [
           {
             "from": "node_modules/frontend-root",
@@ -108,6 +117,11 @@
             "from": "node_modules/shared-web",
             "to": "apps/web"
           }
+        ],
+        "args": [],
+        "ciArgs": [
+          "--no-audit",
+          "--prefer-offline"
         ]
       },
       "collect": {
@@ -137,7 +151,6 @@
         "generator": "Ninja",
         "config": "Release",
         "configureArgs": [
-          "-DCMAKE_BUILD_TYPE=Release",
           "-DUSE_OFFLINE_DEPS=ON"
         ],
         "buildArgs": [

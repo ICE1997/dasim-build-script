@@ -2,19 +2,23 @@
 
 配置分三层：
 
-1. `tools`：构建工具路径（git/maven/npm/cmake/sevenZip/innoSetup）
+1. `tools`：构建工具配置（工具路径、依赖目录、git 凭据）
 2. `build/release/upload`：阶段参数（顺序固定 `build -> release -> upload`）
 3. `projects[]`：项目源码、构建方式、产物收集规则
-
-> 支持简化结构与旧结构，脚本会自动标准化执行。
 
 ## 最简配置骨架
 
 ```json
 {
-  "tools": { "git": "...", "maven": "...", "npm": "...", "cmake": "...", "sevenZip": "...", "innoSetup": "..." },
+  "tools": {
+    "git": { "path": "...", "username": "...", "password": "..." },
+    "maven": { "path": "...", "dependencyDir": "D:/offline-deps/m2-repository", "settingsXml": "./maven/settings.xml" },
+    "npm": { "path": "...", "dependencyDir": "D:/offline-deps/npm-cache" },
+    "cmake": { "path": "..." },
+    "sevenZip": { "path": "..." },
+    "innoSetup": { "path": "..." }
+  },
   "paths": { "workspace": "./workspace", "output": "./output", "package": "./packages", "dependencies": "D:/offline-deps", "logs": "./logs" },
-  "gitAuth": { "username": "...", "password": "..." },
   "version": "1.2.3",
   "build": { "enabled": true, "projects": [], "parallel": { "enabled": true, "maxWorkers": 3 } },
   "release": {
@@ -45,13 +49,29 @@
 - 上下文结构统一：入口脚本统一通过 `New-PipelineContext` 构造运行上下文，避免重复定义。
 - 单项目包装脚本统一：`build-backend.ps1` / `build-frontend.ps1` / `build-cpp.ps1` 统一启用 `Set-StrictMode` 与 `Stop` 策略。
 
+
+## tools 规范（路径 + 依赖 + 凭据）
+
+- 推荐使用对象格式：`tools.<name>.path`。
+- 构建**具体参数**（如 maven/npm/cmake 的 args）建议放在 `projects[].build.*`，按项目维护。
+- 依赖目录可由工具自定义（如 Maven/NPM）：`tools.<tool>.dependencyDir`。
+- `tools.maven.settingsXml`：Maven 全局 `settings.xml` 路径（相对仓库根目录或绝对路径）。
+- Git 凭据放到 `tools.git.username/password`（项目级仓库配置仍可覆盖）。
+
+## Maven 项目说明
+
+`build.tool = "maven"` 时支持：
+
+- `args`：Maven 构建附加参数（项目级）。
+
 ## npm 项目说明
 
 `build.tool = "npm"` 时支持：
 
-- `ciArgs`：`npm ci` 的附加参数（标准化命名，替代旧的 `installArgs`）
-- `skipCi`：是否跳过 `npm ci`
-- `nodeModulesLinks`：将依赖目录中的 node_modules 链接到项目目录或子目录（支持多个）
+- `args`：`npm run <script>` 的附加参数（项目级）。
+- `ciArgs`：`npm ci` 的附加参数（项目级）。
+- `skipCi`：是否跳过 `npm ci`。
+- `nodeModulesLinks`：将依赖目录中的 node_modules 链接到项目目录或子目录（支持多个）。
 
 ## 打包命名与排除
 
@@ -78,7 +98,7 @@ release 阶段默认包名规则：
 - `release.inno.scriptTemplatePath`：`.iss` 模板路径（默认 `./inno/setup-template.iss`）
 
 说明：
-- 启用后会基于 `.iss` 模板生成最终脚本并调用 `tools.innoSetup`（ISCC）编译。
+- 启用后必须基于 `.iss` 模板生成最终脚本并调用 `tools.innoSetup`（ISCC）编译（模板缺失会报错）。
 - 生成的安装包文件也会纳入同一份 `.sha256` 并参与 upload。
 
 ## 产物收集（JSON 驱动）

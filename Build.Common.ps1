@@ -65,9 +65,6 @@ function Assert-Config {
 function Normalize-Config {
     param([Parameter(Mandatory = $true)]$Raw)
 
-    # 如果已经是旧内部结构，直接返回
-    if ($Raw.parameters -and $Raw.stages) { return $Raw }
-
     # 简化结构 -> 内部结构
     $normalized = [PSCustomObject]@{
         tools = $Raw.tools
@@ -79,7 +76,7 @@ function Normalize-Config {
                 dependencyDir = $Raw.paths.dependencies
                 logDir = $Raw.paths.logs
             }
-            auth = [PSCustomObject]@{ git = $Raw.gitAuth }
+            auth = [PSCustomObject]@{ git = $null }
             version = [PSCustomObject]@{ current = $Raw.version }
         }
         stages = [PSCustomObject]@{
@@ -163,9 +160,19 @@ function Get-OptionalProperty {
     return $null
 }
 
+function Get-ToolConfig {
+    param([Parameter(Mandatory = $true)]$Config, [Parameter(Mandatory = $true)][string]$ToolKey)
+    return Get-OptionalProperty -Object $Config.tools -Name $ToolKey
+}
+
 function Resolve-Tool {
     param([Parameter(Mandatory = $true)]$Config, [Parameter(Mandatory = $true)][string]$ToolKey, [string]$Default)
-    if ($Config.tools.$ToolKey -and -not [string]::IsNullOrWhiteSpace($Config.tools.$ToolKey)) { return $Config.tools.$ToolKey }
+
+    $toolCfg = Get-ToolConfig -Config $Config -ToolKey $ToolKey
+    if (-not $toolCfg) { return $Default }
+
+    $toolPath = Get-OptionalProperty -Object $toolCfg -Name 'path'
+    if (-not [string]::IsNullOrWhiteSpace($toolPath)) { return $toolPath }
     return $Default
 }
 
@@ -192,7 +199,7 @@ function New-GitUrl {
 
 function Get-GitCredential {
     param([Parameter(Mandatory = $true)]$Config, [Parameter(Mandatory = $true)]$Project)
-    $globalGit = Get-OptionalProperty -Object $Config.parameters.auth -Name 'git'
+    $globalGit = Get-ToolConfig -Config $Config -ToolKey 'git'
     $sourceGit = Get-OptionalProperty -Object $Project.source -Name 'git'
     $projectUser = Get-OptionalProperty -Object $sourceGit -Name 'username'
     $projectPass = Get-OptionalProperty -Object $sourceGit -Name 'password'
@@ -296,51 +303,68 @@ function Link-NpmNodeModules {
     }
 }
 
+
+function Resolve-ToolDependencyDir {
+    param([Parameter(Mandatory = $true)]$Config, [Parameter(Mandatory = $true)][string]$ToolKey, [string]$DefaultSubDir)
+
+    $toolCfg = Get-ToolConfig -Config $Config -ToolKey $ToolKey
+    $toolDep = if ($toolCfg -and -not ($toolCfg -is [string])) { Get-OptionalProperty -Object $toolCfg -Name 'dependencyDir' } else { $null }
+    if (-not [string]::IsNullOrWhiteSpace($toolDep)) { return $toolDep }
+
+    $depRoot = $Config.parameters.paths.dependencyDir
+    if ([string]::IsNullOrWhiteSpace($depRoot)) { return $null }
+    if ([string]::IsNullOrWhiteSpace($DefaultSubDir)) { return $depRoot }
+    return (Join-Path $depRoot $DefaultSubDir)
+}
+
 function Invoke-ProjectBuildTool {
     param([Parameter(Mandatory = $true)]$Config, [Parameter(Mandatory = $true)]$Project, [Parameter(Mandatory = $true)][string]$ProjectDir)
 
-    $deps = $Config.parameters.paths.dependencyDir
     switch ($Project.build.tool) {
         'maven' {
             $mvn = Resolve-Tool -Config $Config -ToolKey 'maven' -Default 'mvn'
-            $m2 = Join-Path $deps 'm2-repository'
+            $m2 = Resolve-ToolDependencyDir -Config $Config -ToolKey 'maven' -DefaultSubDir 'm2-repository'
             Ensure-Directory -Path $m2
+
             $args = @('clean', 'package', '-o', ("-Dmaven.repo.local={0}" -f $m2))
+            $mavenTool = Get-ToolConfig -Config $Config -ToolKey 'maven'
+            $settingsXml = if ($mavenTool) { [string](Get-OptionalProperty -Object $mavenTool -Name 'settingsXml') } else { $null }
+            if (-not [string]::IsNullOrWhiteSpace($settingsXml)) {
+                $settingsPath = if ([System.IO.Path]::IsPathRooted($settingsXml)) { $settingsXml } else { Join-Path $PSScriptRoot $settingsXml }
+                if (-not (Test-Path -Path $settingsPath)) { throw "tools.maven.settingsXml 不存在: $settingsPath" }
+                $args += @('-s', $settingsPath)
+            }
             if ($Project.build.args) { $args += @($Project.build.args) }
             Invoke-Command -Command $mvn -Args $args -WorkingDirectory $ProjectDir
         }
         'npm' {
             $npm = Resolve-Tool -Config $Config -ToolKey 'npm' -Default 'npm'
-            $cache = Join-Path $deps 'npm-cache'
+            $cache = Resolve-ToolDependencyDir -Config $Config -ToolKey 'npm' -DefaultSubDir 'npm-cache'
             Ensure-Directory -Path $cache
             $env:npm_config_cache = $cache
+
             $ci = @('ci', '--offline', '--cache', $cache)
-            if ($Project.build.ciArgs) {
-                $ci += @($Project.build.ciArgs)
-            }
-            elseif ($Project.build.installArgs) {
-                # 向后兼容旧字段
-                $ci += @($Project.build.installArgs)
-            }
+            if ($Project.build.ciArgs) { $ci += @($Project.build.ciArgs) }
 
             $skipCi = ($Project.build.skipCi -eq $true)
             if (-not $skipCi) {
                 Invoke-Command -Command $npm -Args $ci -WorkingDirectory $ProjectDir
             }
 
-            Link-NpmNodeModules -Project $Project -ProjectDir $ProjectDir -DependencyRoot $deps
+            Link-NpmNodeModules -Project $Project -ProjectDir $ProjectDir -DependencyRoot $Config.parameters.paths.dependencyDir
 
-            $build = @('run', $Project.build.script)
+            $script = if ($Project.build.script) { $Project.build.script } else { 'build' }
+            $build = @('run', $script)
             if ($Project.build.args) { $build += @($Project.build.args) }
             Invoke-Command -Command $npm -Args $build -WorkingDirectory $ProjectDir
         }
         'cmake' {
             $cmake = Resolve-Tool -Config $Config -ToolKey 'cmake' -Default 'cmake'
-            $buildDir = Join-Path $ProjectDir $Project.build.buildDir
+            $buildDir = if ($Project.build.buildDir) { Join-Path $ProjectDir $Project.build.buildDir } else { Join-Path $ProjectDir 'build' }
             Ensure-Directory -Path $buildDir
+
             $cfg = @('-S', $ProjectDir, '-B', $buildDir)
             if ($Project.build.generator) { $cfg += @('-G', $Project.build.generator) }
-            $cfg += ("-DCMAKE_PREFIX_PATH={0}" -f (Join-Path $deps 'cmake-prefix'))
             if ($Project.build.configureArgs) { $cfg += @($Project.build.configureArgs) }
             Invoke-Command -Command $cmake -Args $cfg -WorkingDirectory $ProjectDir
 
@@ -381,13 +405,7 @@ function Invoke-CollectArtifacts {
     )
 
     $targets = @($Project.collect.targets)
-    if ($targets.Count -eq 0) {
-        # 兼容旧配置: build.artifactDir + collect.exclude
-        $defaultDest = Join-Path $OutputDir $Project.id
-        if (Test-Path $defaultDest) { Remove-Item -Path $defaultDest -Recurse -Force }
-        Copy-WithExclude -Source (Join-Path $ProjectDir $Project.build.artifactDir) -Destination $defaultDest -Exclude @($Project.collect.exclude)
-        return
-    }
+    if ($targets.Count -eq 0) { throw "collect.targets 不能为空 (project=$($Project.id))" }
 
     foreach ($t in $targets) {
         if ([string]::IsNullOrWhiteSpace($t.source)) { throw "collect.targets.source 不能为空 (project=$($Project.id))" }
@@ -568,41 +586,22 @@ function New-InnoScript {
     if (-not [string]::IsNullOrWhiteSpace($templatePath) -and -not [System.IO.Path]::IsPathRooted($templatePath)) {
         $templatePath = Join-Path $PSScriptRoot $templatePath
     }
-
-    if (-not [string]::IsNullOrWhiteSpace($templatePath) -and (Test-Path -Path $templatePath)) {
-        $template = Get-Content -Path $templatePath -Raw
-        $rendered = $template
-            .Replace('{{APP_NAME}}', $appName)
-            .Replace('{{APP_VERSION}}', $appVersion)
-            .Replace('{{APP_PUBLISHER}}', $publisher)
-            .Replace('{{DEFAULT_DIR_NAME}}', ('{autopf}\' + $appName))
-            .Replace('{{OUTPUT_DIR}}', $Context.packageDir)
-            .Replace('{{OUTPUT_BASE_FILENAME}}', $outputBaseName)
-            .Replace('{{DISK_SLICE_SIZE}}', $slice)
-            .Replace('{{SOURCE_DIR}}', $Context.outputDir)
-            .Replace('{{EXTERNAL_FLAG}}', $externalFlag)
-        $rendered | Set-Content -Path $scriptPath -Encoding UTF8
+    if ([string]::IsNullOrWhiteSpace($templatePath) -or -not (Test-Path -Path $templatePath)) {
+        throw "Inno 模板文件不存在: $templatePath"
     }
-    else {
-        $lines = @()
-        $lines += '; Auto-generated by build pipeline'
-        $lines += '[Setup]'
-        $lines += "AppName=$appName"
-        $lines += "AppVersion=$appVersion"
-        $lines += "AppPublisher=$publisher"
-        $lines += 'DefaultDirName={autopf}\' + $appName
-        $lines += "OutputDir=$($Context.packageDir)"
-        $lines += "OutputBaseFilename=$outputBaseName"
-        $lines += 'Compression=lzma2'
-        $lines += 'SolidCompression=yes'
-        $lines += 'DiskSpanning=yes'
-        $lines += "DiskSliceSize=$slice"
-        $lines += ''
-        $lines += '[Files]'
-        $lines += 'Source: "{0}\*"; DestDir: "{{app}}"; Flags: ignoreversion recursesubdirs createallsubdirs{1}' -f $Context.outputDir, $externalFlag
 
-        $lines | Set-Content -Path $scriptPath -Encoding UTF8
-    }
+    $template = Get-Content -Path $templatePath -Raw
+    $rendered = $template
+        .Replace('{{APP_NAME}}', $appName)
+        .Replace('{{APP_VERSION}}', $appVersion)
+        .Replace('{{APP_PUBLISHER}}', $publisher)
+        .Replace('{{DEFAULT_DIR_NAME}}', ('{autopf}\' + $appName))
+        .Replace('{{OUTPUT_DIR}}', $Context.packageDir)
+        .Replace('{{OUTPUT_BASE_FILENAME}}', $outputBaseName)
+        .Replace('{{DISK_SLICE_SIZE}}', $slice)
+        .Replace('{{SOURCE_DIR}}', $Context.outputDir)
+        .Replace('{{EXTERNAL_FLAG}}', $externalFlag)
+    $rendered | Set-Content -Path $scriptPath -Encoding UTF8
 
     return [PSCustomObject]@{ ScriptPath = $scriptPath; OutputBaseName = $outputBaseName }
 }
